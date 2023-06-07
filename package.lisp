@@ -1,8 +1,25 @@
 (defpackage cffi-ops
   (:use #:cl #:alexandria #:arrow-macros #:cffi #:trivial-macroexpand-all)
-  (:import-from #:cffi #:ctype))
+  (:import-from #:cffi #:ctype)
+  (:export #:cthe #:clocally #:clet #:clet* #:& #:-> #:[]))
 
 (in-package #:cffi-ops)
+
+(defvar *value-required* t)
+
+(defvar *type-dictionary* nil)
+
+(defvar *struct-slots* nil)
+
+(declaim (inline memcpy))
+(defcfun "memcpy" :void
+  (dest :pointer)
+  (src :pointer)
+  (n :size))
+
+(declaim (inline free))
+(defcfun "free" :void
+  (ptr :pointer))
 
 (defun ctypes-slots (types)
   (let ((type-table (make-hash-table)))
@@ -19,11 +36,11 @@
                     (ctype-slots (cffi::pointer-type ctype)))))))
       (remove-duplicates (mapcan #'ctype-slots types)))))
 
-(defvar *type-dictionary* nil)
-
-(defvar *bound-macros* nil)
-
-(defvar *value-required* t)
+(defun form-type (form)
+  (etypecase form
+    (symbol (values (assoc-value *type-dictionary* form) form))
+    (list (destructuring-ecase form
+            ((cthe ctype cform) (values (eval ctype) cform))))))
 
 (declaim (inline cthe))
 (defun cthe (ctype form)
@@ -36,40 +53,74 @@
     (with-gensyms (store)
       (values dummies vals `(,store) `(setf ,getter ,store) `(cthe ,ctype ,getter)))))
 
-(defun form-type (form)
-  (etypecase form
-    (symbol (values form (assoc-value *type-dictionary* form)))
-    (list (destructuring-ecase form
-            ((cthe self-type self-form) (values self-form (eval self-type)))))))
+(define-setf-expander -> (init &rest exps &environment env)
+  (multiple-value-bind (dummies vals newval setter getter) (get-setf-expansion (walk-form `(-> ,init . ,exps)) env)
+    (declare (ignore newval setter))
+    (with-gensyms (store)
+      (values dummies vals `(,store) `(setf ,getter ,store) `(-> ,getter . ,exps)))))
 
-(defun slot-access-form (slot form &optional env &aux type)
-  (setf (values form type) (let ((*value-required* nil)) (form-type (macroexpand form env))))
-  (loop :for parsed-type := (cffi::ensure-parsed-base-type type)
-        :for expansions :from 0
-        :while (typep parsed-type 'cffi::foreign-pointer-type)
-        :when (plusp expansions)
-          :do (setf form `(mem-ref ,form ',(cffi::unparse-type type)))
-        :do (setf type (cffi::pointer-type parsed-type)))
-  (let ((rtype (foreign-slot-type type slot)))
-    (if *value-required*
-        `(cthe ',rtype (foreign-slot-value ,form ',(cffi::unparse-type type) ',slot))
-        `(cthe '(:pointer ,rtype) (foreign-slot-pointer ,form ',(cffi::unparse-type type) ',slot)))))
+(define-setf-expander & (form &environment env)
+  (multiple-value-bind (dummies vals newval setter getter) (get-setf-expansion (let ((*value-required* nil)) (walk-form form)) env)
+    (declare (ignore newval setter))
+    (with-gensyms (store)
+      (values dummies vals `(,store)
+              `(memcpy ,getter ,store
+                       ,(foreign-type-size
+                         (cffi::unparse-type
+                          (cffi::pointer-type
+                           (cffi::ensure-parsed-base-type
+                            (form-type getter))))))
+              `(& ,getter)))))
 
-(defun array-access-form (pointer index &optional env &aux type)
-  (setf (values pointer type) (let ((*value-required* t)) (form-type (macroexpand pointer env)))
-        type (cffi::ensure-parsed-base-type type))
-  (let ((rtype (cffi::pointer-type (cffi::ensure-parsed-base-type type))))
-    (if *value-required*
-        `(cthe ',(cffi::unparse-type rtype) (mem-aref ,pointer ',(cffi::unparse-type rtype) ,index))
-        `(cthe ',(cffi::unparse-type type) (mem-aptr ,pointer ',(cffi::unparse-type rtype) ,index)))))
+(defun expand-slot (slot form)
+  (multiple-value-bind (type form)
+      (form-type (let ((*value-required* nil)) (walk-form form)))
+    (loop :for parsed-type := (cffi::ensure-parsed-base-type type)
+          :for expansions :from 0
+          :while (typep parsed-type 'cffi::foreign-pointer-type)
+          :when (plusp expansions)
+            :do (setf form `(mem-ref ,form ',(cffi::unparse-type type)))
+          :do (setf type (cffi::unparse-type (cffi::pointer-type parsed-type))))
+    (let ((rtype (foreign-slot-type type slot)))
+      (if *value-required*
+          `(cthe ',rtype (foreign-slot-value ,form ',type ',slot))
+          `(cthe '(:pointer ,rtype) (foreign-slot-pointer ,form ',type ',slot))))))
 
-(defun ref-form (form &optional env &aux type)
-  (setf (values form type) (let ((*value-required* nil)) (form-type (macroexpand form env))))
-  `(cthe ',type ,form))
+(defun expand-aref (pointer index)
+  (multiple-value-bind (type pointer)
+      (form-type (let ((*value-required* t)) (walk-form pointer)))
+    (let ((index (let ((*value-required* t)) (walk-form index)))
+          (rtype (cffi::unparse-type (cffi::pointer-type (cffi::ensure-parsed-base-type type)))))
+      (if *value-required*
+          `(cthe ',rtype (mem-aref ,pointer ',rtype ,index))
+          `(cthe ',type (mem-aptr ,pointer ',rtype ,index))))))
 
-(defun deref-form (form &optional env)
-  (let ((*value-required* t))
-    (array-access-form form 0 env)))
+(defun expand-ref (form)
+  (multiple-value-bind (type form) (form-type (let ((*value-required* nil)) (walk-form form)))
+    `(cthe ',type ,form)))
+
+(defun walk-form (form)
+  (typecase form
+    (cons
+     (destructuring-case form
+       (((declare quote) &rest args) (declare (ignore args)) form)
+       (((let let*) bindings &rest body)
+        (list* (car form)
+               (mapcar (lambda (binding)
+                         (typecase binding
+                           (symbol binding)
+                           (list (list (first binding) (walk-form (second binding))))))
+                       bindings)
+               (mapcar #'walk-form body)))
+       ((cthe ctype form) (declare (ignore ctype)) form)
+       ((-> &rest args) (declare (ignore args)) (walk-form (macroexpand form)))
+       (([] pointer &optional (index 0)) (expand-aref pointer index))
+       ((& form) (expand-ref form))
+       ((t &rest args)
+        (if (find (car form) *struct-slots*)
+            (expand-slot (car form) (first args))
+            (cons (car form) (let ((*value-required* t)) (mapcar #'walk-form args)))))))
+    (t form)))
 
 (defmacro clocally (&body body &environment env)
   (let* ((declarations (loop :for (declaration . rest) :on body
@@ -87,15 +138,38 @@
                               (mapcar (rcurry #'cons (car type-vars)) (cdr type-vars)))
                             ctypes))
              (slots (ctypes-slots (mapcar #'cdr types))))
-        (let ((macros (loop :for slot :in (set-difference slots *bound-macros*)
-                            :collect `(,slot (form &environment env) (slot-access-form ',slot form env)))))
-          (let ((*bound-macros* (nconc slots *bound-macros*))
-                (*type-dictionary* (nconc types *type-dictionary*)))
-            (macroexpand-all
-             `(locally (declare . ,declarations)
-                (macrolet (([] (pointer index &environment env) (array-access-form pointer index env))
-                           (& (form &environment env) (ref-form form env))
-                           ($ (form &environment env) (deref-form form env))
-                           . ,macros)
-                  . ,body))
-             (when (consp (second env)) env))))))))
+        (let ((*type-dictionary* (nconc types *type-dictionary*))
+              (*struct-slots* (nconc slots *struct-slots*)))
+          `(cthe nil ,(let ((*value-required* t))
+                        (walk-form (macroexpand-all `(locally (declare . ,declarations) . ,body) #-ecl env)))))))))
+
+(defmacro clet (bindings &body body)
+  (loop :with type :and form
+        :for (name var) :in bindings
+        :if (not (and (listp var) (keywordp (first var))))
+          :do (setf (values type form) (form-type (walk-form var)))
+          :and :collect `(let ((,name ,form))) :into forms
+          :and :collect (cons name type) :into types
+        :else :if (eq (first var) :pointer)
+          :collect `(let ((,name (foreign-alloc ',(second var))))) :into forms
+          :and :collect (cons name var) :into types
+        :else
+          :collect `(with-foreign-object (,name ',var)) :into forms
+          :and :collect (cons name `(:pointer ,var)) :into types
+        :finally
+           (return
+             (reduce (lambda (x acc) (nconc x (list acc))) forms
+                     :from-end t
+                     :initial-value `(clocally
+                                       (declare
+                                        . ,(mapcar (lambda (type)
+                                                     `(ctype ,(cdr type) ,(car type)))
+                                                   types))
+                                       . ,body)))))
+
+(defmacro clet* (bindings &body body)
+  (if bindings
+      `(clet (,(car bindings))
+         (clet* ,(cdr bindings)
+           . ,body))
+      `(progn . ,body)))
