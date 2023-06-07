@@ -1,7 +1,7 @@
 (defpackage cffi-ops
   (:use #:cl #:alexandria #:arrow-macros #:cffi #:trivial-macroexpand-all)
   (:import-from #:cffi #:ctype)
-  (:export #:cthe #:clocally #:clet #:clet* #:& #:-> #:[]))
+  (:export #:cthe #:clocally #:clet #:clet* #:csetf #:& #:-> #:[]))
 
 (in-package #:cffi-ops)
 
@@ -61,21 +61,6 @@
     (with-gensyms (store)
       (values vars vals `(,store) `(setf ,getter ,store) getter))))
 
-(define-setf-expander & (form &environment env)
-  (multiple-value-bind (vars vals newval setter getter)
-      (let ((*value-required* nil))
-        (get-setf-expansion (setf form (expand-form form)) env))
-    (declare (ignore vars vals newval setter))
-    (with-gensyms (store)
-      (values nil nil `(,store)
-              `(memcpy ,getter ,store
-                       ,(foreign-type-size
-                         (cffi::unparse-type
-                          (cffi::pointer-type
-                           (cffi::ensure-parsed-base-type
-                            (form-type form))))))
-              getter))))
-
 (defun expand-slot (slot form)
   (multiple-value-bind (type form)
       (form-type (let ((*value-required* nil)) (expand-form form)))
@@ -127,7 +112,7 @@
 
 (defmacro clocally (&body body &environment env)
   (let* ((declarations (loop :for (declaration . rest) :on body
-                             :while (eq (car declaration) 'declare)
+                             :while (and (listp declaration) (eq (car declaration) 'declare))
                              :do (setf body rest)
                              :append (cdr declaration))))
     (multiple-value-bind (ctypes declarations)
@@ -193,4 +178,15 @@
       `(clet (,(car bindings))
          (clet* ,(cdr bindings)
            . ,body))
-      `(progn . ,body)))
+      `(clocally . ,body)))
+
+(defmacro csetf (&rest args)
+  (when args
+    (destructuring-bind (var val &rest args) args
+      (multiple-value-bind (ltype lform) (form-type (let ((*value-required* nil)) (expand-form var)))
+        (multiple-value-bind (rtype rform) (form-type (let ((*value-required* nil)) (expand-form val)))
+          (assert (eql (cffi::ensure-parsed-base-type (cffi::pointer-type (cffi::ensure-parsed-base-type ltype)))
+                       (cffi::ensure-parsed-base-type (cffi::pointer-type (cffi::ensure-parsed-base-type rtype)))))
+          `(progn
+             (memcpy ,lform ,rform ,(foreign-type-size (cffi::unparse-type (cffi::pointer-type (cffi::ensure-parsed-base-type ltype)))))
+             (csetf . ,args)))))))
