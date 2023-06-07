@@ -1,0 +1,172 @@
+#+TITLE: cffi-ops
+Write CFFI stuff quickly without runtime overhead.
+* Introduction
+CFFI is powerful, but using its API to write C-style code can sometimes be cumbersome because it requires you to repeatedly pass in types,
+unlike the dot operator in C that has some type inference capabilities.
+
+This library provides CFFI with dot operator-like functionality at compile time,
+allowing you to write CFFI-related code as simple as C with just a small amount of FFI type declarations.
+
+This library has been tested to work on SBCL, CCL, ECL, ABCL, and CLISP,
+and theoretically is portable across implementations that provide ~macroexpand-all~.
+* Rules
+Here is a comparison table between C syntax:
+
+| C                         | ~cffi-ops~                                                                       |
+|---------------------------+--------------------------------------------------------------------------------|
+| ~x.y.z~, ~x.y->z~, or ~x->y->z~ | ~(-> x y z)~ (Note that ~x~, ~y~, and ~z~ must be the same symbols used in ~defcstruct~) |
+| ~&x.y~                      | ~(& (-> x y))~                                                                   |
+| ~*x~                        | ~([] x)~                                                                         |
+| ~x[n]~                      | ~([] x n)~                                                                       |
+| ~x.y = z~                   | ~(setf (-> x y) z)~ if ~z~ is a variable                                           |
+|                           | ~(csetf (-> x y) z)~ if ~z~ is a CFFI pointer                                      |
+| ~A _a, *a = &_a~            | ~(clet ((a (:struct A))) ...)~                                                   |
+| ~A *a = malloc(sizeof(A))~  | ~(clet ((a (:pointer (:struct A)))) ...)~                                        |
+| ~A _a = *b, *a = &_a~       | ~(clet ((a ([] b))) ...)~                                                        |
+| ~A *a = b~                  | ~(clet ((a b)) ...)~                                                             |
+
+Please note that since it is not possible to directly manipulate C composite types in Lisp,
+binding and assignment of composite types require the use of ~clet~ (or ~clet*~) and ~csetf~,
+which bind and operate on variables that are CFFI pointers.
+* Example
+For the following C code:
+
+#+BEGIN_SRC c
+  #include <stdlib.h>
+  #include <assert.h>
+
+  typedef struct {
+    float x;
+    float y;
+    float z;
+  } Vector3;
+
+  typedef struct {
+    Vector3 v1;
+    Vector3 v2;
+    Vector3 v3;  
+  } Matrix3;
+
+  void Vector3Add(Vector3 *output, const Vector3 *v1, const Vector3 *v2) {
+    output->x = v1->x + v2->x;
+    output->y = v1->y + v2->y;
+    output->z = v1->z + v2->z;
+  }
+
+  int main(int argc, char *argv[]) {
+    Matrix3 m1[3];
+    m1[0].v1.x = 1.0;
+    m1[0].v1.y = 2.0;
+    m1[0].v1.z = 3.0;
+    Matrix3 m2 = *m1;
+    Vector3 *v1 = &m2.v1;
+    Vector3 *v2 = malloc(sizeof(Vector3));
+    ,*v2 = *v1;
+    v2->x = 3.0;
+    v2->z = 1.0;
+    Vector3Add(v1, v1, v2);
+    assert(v1->x == 4.0);
+    assert(v1->y == 4.0);
+    assert(v1->z == 4.0);
+    free(v2);
+    return 0;
+  }
+#+END_SRC
+
+The equivalent Lisp code (written using ~cffi-ops~) is:
+
+#+BEGIN_SRC lisp
+  (defpackage cffi-ops-example
+    (:use #:cl #:cffi #:cffi-ops))
+
+  (in-package #:cffi-ops-example)
+
+  (defcstruct vector3
+    (x :float)
+    (y :float)
+    (z :float))
+
+  (defcstruct matrix3
+    (v1 (:struct vector3))
+    (v2 (:struct vector3))
+    (v3 (:struct vector3)))
+
+  (defun vector3-add (output v1 v2)
+    (clocally
+      (declare (ctype (:pointer (:struct vector3)) output v1 v2))
+      (setf (-> output x) (+ (-> v1 x) (-> v2 x))
+            (-> output y) (+ (-> v1 y) (-> v2 y))
+            (-> output z) (+ (-> v1 z) (-> v2 z)))))
+
+  (defun main ()
+    (clet ((m1 (:array (:struct matrix3) 3)))
+      (setf (-> ([] m1 0) v1 x) 1.0
+            (-> ([] m1 0) v1 y) 2.0
+            (-> ([] m1 0) v1 z) 3.0)
+      (clet* ((m2 ([] m1))
+              (v1 (& (-> m2 v1)))
+              (v2 (:pointer (:struct vector3))))
+        (csetf v2 v1)
+        (setf (-> v2 x) 3.0
+              (-> v2 z) 1.0)
+        (vector3-add v1 v1 v2)
+        (assert (= (-> v1 x) 4.0))
+        (assert (= (-> v1 y) 4.0))
+        (assert (= (-> v1 z) 4.0))
+        (foreign-free v2))))
+#+END_SRC
+
+And the equivalent Lisp code (written without using ~cffi-ops~) is:
+
+#+BEGIN_SRC lisp
+  (defpackage cffi-example
+    (:use #:cl #:cffi))
+
+  (in-package #:cffi-example)
+
+  (defcstruct vector3
+    (x :float)
+    (y :float)
+    (z :float))
+
+  (defcstruct matrix3
+    (v1 (:struct vector3))
+    (v2 (:struct vector3))
+    (v3 (:struct vector3)))
+
+  (declaim (inline memcpy))
+  (defcfun "memcpy" :void
+    (dest :pointer)
+    (src :pointer)
+    (n :size))
+
+  (defun vector3-add (output v1 v2)
+    (with-foreign-slots (((xout x) (yout y) (zout z)) output (:struct vector3))
+      (with-foreign-slots (((x1 x) (y1 y) (z1 z)) v1 (:struct vector3))
+        (with-foreign-slots (((x2 x) (y2 y) (z2 z)) v2 (:struct vector3))
+          (setf xout (+ x1 x2) yout (+ y1 y2) zout (+ z1 z2))))))
+
+  (defun main ()
+    (with-foreign-object (m1 '(:struct matrix3) 3)
+      (with-foreign-slots ((x y z)
+                           (foreign-slot-pointer
+                            (mem-aptr m1 '(:struct matrix3) 0)
+                            '(:struct matrix3) 'v1)
+                           (:struct vector3))
+        (setf x 1.0 y 2.0 z 3.0))
+      (with-foreign-object (m2 '(:struct matrix3))
+        (memcpy m2 m1 (foreign-type-size '(:struct matrix3)))
+        (let ((v1 (foreign-slot-pointer m2 '(:struct matrix3) 'v1))
+              (v2 (foreign-alloc '(:struct vector3))))
+          (memcpy v2 v1 (foreign-type-size '(:struct vector3)))
+          (with-foreign-slots ((x z) v2 (:struct vector3))
+            (setf x 3.0 z 1.0))
+          (vector3-add v1 v1 v2)
+          (with-foreign-slots ((x y z) v1 (:struct vector3))
+            (assert (= x 4.0))
+            (assert (= y 4.0))
+            (assert (= z 4.0)))
+          (foreign-free v2)))))
+#+END_SRC
+
+Both of them should generate almost equivalent machine code in SBCL and have very similar performance.
