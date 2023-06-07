@@ -1,7 +1,7 @@
 (defpackage cffi-ops
   (:use #:cl #:alexandria #:arrow-macros #:cffi #:trivial-macroexpand-all)
   (:import-from #:cffi #:ctype)
-  (:export #:cthe #:clocally #:clet #:clet* #:csetf #:& #:-> #:[]))
+  (:export #:ctype #:cthe #:clocally #:clet #:clet* #:csetf #:& #:-> #:[]))
 
 (in-package #:cffi-ops)
 
@@ -111,6 +111,7 @@
     (t form)))
 
 (defmacro clocally (&body body &environment env)
+  "Similar to LOCALLY but allows using CTYPE to declare CFFI types for variables."
   (let* ((declarations (loop :for (declaration . rest) :on body
                              :while (and (listp declaration) (eq (car declaration) 'declare))
                              :do (setf body rest)
@@ -132,6 +133,11 @@
                         (expand-form (macroexpand-all `(locally (declare . ,declarations) . ,body) #-ecl env)))))))))
 
 (defmacro clet (bindings &body body)
+  "Equivalent to variable definition and initialization statements in C, but with type inference. For each element (NAME FORM) of BINDINGS, NAME is always bound to a CFFI pointer, with the following cases for different FORMs:
+- A pointer type of CFFI: An uninitialized variable of the pointer target type is created on the heap, and the bound pointer is pointed to it. Note that FOREIGN-FREE needs to be used to manually release memory.
+- A non-pointer types of CFFI: An uninitialized variable of that type is created on the stack, and the bound pointer is pointed to it.
+- A variable with pointer type: NAME is directly bound to this pointer variable.
+- A variables with non-pointer type: The variable is copied onto the stack, and the bound pointer is pointed to it."
   (flet ((pointer-type-p (type)
            (typep (cffi::ensure-parsed-base-type type) 'cffi::foreign-pointer-type))
          (ensure-pointer-type (type)
@@ -159,7 +165,7 @@
                                   `(let ((,name ,var)))
                                   `(with-foreign-object (,name ',type)))
                             ,@(unless (pointer-type-p type)
-                                `((setf (& (cthe '(:pointer ,type) ,name)) (& ,var)))))
+                                `((csetf (cthe '(:pointer ,type) ,name) ,var))))
                    :into forms
             :and :collect (cons name (ensure-pointer-type type)) :into types
           :finally
@@ -174,6 +180,7 @@
                                          . ,body))))))
 
 (defmacro clet* (bindings &body body)
+  "Similar to CLET, but the initialization FORM of the variable can use variables defined earlier."
   (if bindings
       `(clet (,(car bindings))
          (clet* ,(cdr bindings)
@@ -181,6 +188,7 @@
       `(clocally . ,body)))
 
 (defmacro csetf (&rest args)
+  "Equivalent to assignment statements in C, which assign the rvalue of each pair to the lvalue. Note that both the lvalues and rvalues are represented as CFFI pointers here, and the assignment operation is actually a memory copy."
   (when args
     (destructuring-bind (var val &rest args) args
       (multiple-value-bind (ltype lform) (form-type (let ((*value-required* nil)) (expand-form var)))
