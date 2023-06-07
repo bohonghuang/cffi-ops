@@ -7,5 +7,8 @@
   :homepage "https://github.com/bohonghuang/cffi-ops"
   :bug-tracker "https://github.com/bohonghuang/cffi-ops/issues"
   :source-control (:git "https://github.com/bohonghuang/cffi-ops.git")
-  :components ((:file "package"))
+  :components ((:file "package")
+               (:file "walker" :depends-on ("package"))
+               (:file "setf" :depends-on ("package" "walker"))
+               (:file "macros" :depends-on ("package" "walker")))
   :depends-on (#:alexandria #:cffi #:arrow-macros #:trivial-macroexpand-all))
