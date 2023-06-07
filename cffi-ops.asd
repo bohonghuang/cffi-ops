@@ -11,4 +11,11 @@
                (:file "walker" :depends-on ("package"))
                (:file "setf" :depends-on ("package" "walker"))
                (:file "macros" :depends-on ("package" "walker")))
-  :depends-on (#:alexandria #:cffi #:arrow-macros #:trivial-macroexpand-all))
+  :depends-on (#:alexandria #:cffi #:arrow-macros #:trivial-macroexpand-all)
+  :in-order-to ((test-op (test-op #:cffi-ops/test))))
+
+(defsystem cffi-ops/test
+  :depends-on (#:cffi-ops #:parachute)
+  :pathname "./test/"
+  :components ((:file "package"))
+  :perform (test-op (op c) (symbol-call '#:parachute '#:test (find-symbol (symbol-name '#:suite) '#:cffi-ops.test))))
