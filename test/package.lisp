@@ -27,7 +27,7 @@
           (-> ([] m1 0) v1 z) 3.0)
     (clet* ((m2 ([] m1))
             (v1 (& (-> m2 v1)))
-            (v2 (:pointer (:struct vector3))))
+            (v2 (foreign-alloc '(:struct vector3))))
       (csetf v2 v1)
       (setf (-> v2 x) 3.0
             (-> v2 z) 1.0)

@@ -28,12 +28,11 @@
           `(cthe nil ,(let ((*value-required* t))
                         (expand-form (macroexpand-all `(locally (declare . ,declarations) . ,body) #-ecl env)))))))))
 
-(defmacro clet (bindings &body body)
+(defmacro clet (bindings &body body &environment env)
   "Equivalent to variable definition and initialization statements in C, but with type inference. For each element (NAME FORM) of BINDINGS, NAME is always bound to a CFFI pointer, with the following cases for different FORMs:
-- A pointer type of CFFI: An uninitialized variable of the pointer target type is created on the heap, and the bound pointer is pointed to it. Note that FOREIGN-FREE needs to be used to manually release memory.
-- A non-pointer types of CFFI: An uninitialized variable of that type is created on the stack, and the bound pointer is pointed to it.
+- A type of CFFI: An uninitialized variable of that type is created on the stack, and the bound pointer is pointed to it.
 - A variable with pointer type: NAME is directly bound to this pointer variable.
-- A variables with non-pointer type: The variable is copied onto the stack, and the bound pointer is pointed to it."
+- A variable with non-pointer type: The variable is copied onto the stack, and the bound pointer is pointed to it."
   (flet ((pointer-type-p (type)
            (typep (cffi::ensure-parsed-base-type type) 'cffi::foreign-pointer-type))
          (ensure-pointer-type (type)
@@ -48,13 +47,16 @@
                 (t type)))))
     (loop :with type :and form
           :for (name var) :in bindings
-          :if (or (keywordp var) (and (listp var) (keywordp (first var))))
-            :if (and (listp var) (eq (first var) :pointer))
-              :collect `(let ((,name (foreign-alloc ',(second var))))) :into forms
-              :and :collect (cons name (ensure-pointer-type var)) :into types
+          :if (or (keywordp var) (and (listp var) (or (keywordp (first var)) (eq (first var) 'foreign-alloc))))
+            :if (and (listp var) (eq (first var) 'foreign-alloc))
+              :collect `(let ((,name ,var))) :into forms
+              :and :when (constantp (second var) env)
+                :collect (cons name (ensure-pointer-type (eval (second var)))) :into types
+              :end
             :else
               :collect `(with-foreign-object (,name ',var)) :into forms
               :and :collect (cons name (ensure-pointer-type var)) :into types
+            :end
           :else
             :do (setf (values type form) (form-type (expand-form var)))
             :and :collect `(,@(if (pointer-type-p type)

@@ -12,20 +12,20 @@ and theoretically is portable across implementations that provide ~macroexpand-a
 * Rules
 Here is a comparison table between C syntax:
 
-| C                         | ~cffi-ops~                                                                       |
-|---------------------------+--------------------------------------------------------------------------------|
-| ~x.y.z~, ~x.y->z~, or ~x->y->z~ | ~(-> x y z)~ (Note that ~x~, ~y~, and ~z~ must be the same symbols used in ~defcstruct~) |
-| ~&x.y~                      | ~(& (-> x y))~                                                                   |
-| ~*x~                        | ~([] x)~                                                                         |
-| ~x[n]~                      | ~([] x n)~                                                                       |
-| ~x.y = z~                   | ~(setf (-> x y) z)~ if ~z~ is a variable                                           |
-|                           | ~(csetf (-> x y) z)~ if ~z~ is a CFFI pointer                                      |
-| ~A _a, *a = &_a~            | ~(clet ((a (:struct A))) ...)~                                                   |
-| ~A *a = malloc(sizeof(A))~  | ~(clet ((a (:pointer (:struct A)))) ...)~                                        |
-| ~A _a = *b, *a = &_a~       | ~(clet ((a ([] b))) ...)~                                                        |
-| ~A *a = b~                  | ~(clet ((a b)) ...)~                                                             |
+| C                        | ~cffi-ops~                                                                       |
+|--------------------------+--------------------------------------------------------------------------------|
+| ~x->y.z~ or ~x->y->z~        | ~(-> x y z)~ (Note that ~x~, ~y~, and ~z~ must be the same symbols used in ~defcstruct~) |
+| ~&x.y~                     | ~(& (-> x y))~                                                                   |
+| ~*x~                       | ~([] x)~                                                                         |
+| ~x[n]~                     | ~([] x n)~                                                                       |
+| ~x.y = z~                  | ~(setf (-> x y) z)~ if ~z~ is a variable                                           |
+|                          | ~(csetf (-> x y) z)~ if ~z~ is a CFFI pointer                                      |
+| ~A _a, *a = &_a~           | ~(clet ((a (:struct A))) ...)~                                                   |
+| ~A *a = malloc(sizeof(A))~ | ~(clet ((a (cffi:foreign-alloc '(:struct A)))) ...)~                             |
+| ~A _a = *b, *a = &_a~      | ~(clet ((a ([] b))) ...)~                                                        |
+| ~A *a = b~                 | ~(clet ((a b)) ...)~                                                             |
 
-Please note that since it is not possible to directly manipulate C composite types in Lisp,
+Please note that since it is not possible to directly manipulate C compound types in Lisp,
 binding and assignment of composite types require the use of ~clet~ (or ~clet*~) and ~csetf~,
 which bind and operate on variables that are CFFI pointers.
 * Example
@@ -105,7 +105,7 @@ The equivalent Lisp code (written using ~cffi-ops~) is:
             (-> ([] m1 0) v1 z) 3.0)
       (clet* ((m2 ([] m1))
               (v1 (& (-> m2 v1)))
-              (v2 (:pointer (:struct vector3))))
+              (v2 (foreign-alloc '(:struct vector3))))
         (csetf v2 v1)
         (setf (-> v2 x) 3.0
               (-> v2 z) 1.0)
