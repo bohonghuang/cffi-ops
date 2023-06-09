@@ -25,10 +25,11 @@
   (etypecase form
     (symbol (values (assoc-value *type-dictionary* form) form))
     (list (destructuring-ecase form
-            ((cthe ctype cform) (values (eval ctype) cform))))))
+            ((%cthe ctype cform) (assert (constantp ctype)) (values (eval ctype) cform))
+            ((cthe ctype cform) (values ctype cform))))))
 
-(declaim (inline cthe))
-(defun cthe (ctype form)
+(declaim (inline %cthe))
+(defun %cthe (ctype form)
   (declare (ignore ctype))
   (values form))
 
@@ -43,8 +44,8 @@
           :do (setf type (cffi::unparse-type (cffi::pointer-type parsed-type))))
     (let ((rtype (foreign-slot-type type slot)))
       (if *value-required*
-          `(cthe ',rtype (foreign-slot-value ,form ',type ',slot))
-          `(cthe '(:pointer ,rtype) (foreign-slot-pointer ,form ',type ',slot))))))
+          `(%cthe ',rtype (foreign-slot-value ,form ',type ',slot))
+          `(%cthe '(:pointer ,rtype) (foreign-slot-pointer ,form ',type ',slot))))))
 
 (defun expand-aref (pointer index)
   (multiple-value-bind (type pointer)
@@ -52,18 +53,18 @@
     (let ((index (let ((*value-required* t)) (expand-form index)))
           (rtype (cffi::unparse-type (cffi::pointer-type (cffi::ensure-parsed-base-type type)))))
       (if *value-required*
-          `(cthe ',rtype (mem-aref ,pointer ',rtype ,index))
-          `(cthe ',type (mem-aptr ,pointer ',rtype ,index))))))
+          `(%cthe ',rtype (mem-aref ,pointer ',rtype ,index))
+          `(%cthe ',type (mem-aptr ,pointer ',rtype ,index))))))
 
 (defun expand-ref (form)
   (multiple-value-bind (type form) (form-type (let ((*value-required* nil)) (expand-form form)))
-    `(cthe ',type ,form)))
+    `(%cthe ',type ,form)))
 
 (defun expand-form (form)
   (typecase form
     (cons
      (destructuring-case form
-       (((declare quote cthe) &rest args) (declare (ignore args)) form)
+       (((declare quote %cthe) &rest args) (declare (ignore args)) form)
        (((let let*) bindings &rest body)
         (list* (car form)
                (mapcar (lambda (binding)

@@ -6,6 +6,10 @@
   (src :pointer)
   (n :size))
 
+(defmacro cthe (ctype form)
+  "Similar to THE, but declares the CFFI type for FORM."
+  `(%cthe ',ctype ,form))
+
 (defmacro clocally (&body body &environment env)
   "Similar to LOCALLY but allows using CTYPE to declare CFFI types for variables."
   (let* ((declarations (loop :for (declaration . rest) :on body
@@ -25,7 +29,7 @@
              (slots (ctypes-slots (mapcar #'cdr types))))
         (let ((*type-dictionary* (nconc types *type-dictionary*))
               (*struct-slots* (nconc slots *struct-slots*)))
-          `(cthe nil ,(let ((*value-required* t))
+          `(%cthe nil ,(let ((*value-required* t))
                         (expand-form (macroexpand-all `(locally (declare . ,declarations) . ,body) #-ecl env)))))))))
 
 (defmacro clet (bindings &body body &environment env)
@@ -63,7 +67,7 @@
                                   `(let ((,name ,var)))
                                   `(with-foreign-object (,name ',type)))
                             ,@(unless (pointer-type-p type)
-                                `((csetf (cthe '(:pointer ,type) ,name) ,var))))
+                                `((csetf (%cthe '(:pointer ,type) ,name) ,var))))
                    :into forms
             :and :collect (cons name (ensure-pointer-type type)) :into types
           :finally
