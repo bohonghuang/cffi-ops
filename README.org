@@ -26,8 +26,12 @@ Here is a comparison table between C syntax:
 | ~A *a = b~                 | ~(clet ((a b)) ...)~                                                             |
 
 Please note that since it is not possible to directly manipulate C compound types in Lisp,
-binding and assignment of composite types require the use of ~clet~ (or ~clet*~) and ~csetf~,
+binding and assignment of compound types require the use of ~clet~ (or ~clet*~) and ~csetf~,
 which bind and operate on variables that are CFFI pointers.
+
+And the symbol ~->~ is directly exported from the [[https://github.com/hipeta/arrow-macros][arrow-macros]] package,
+so this library is fully compatible with ~arrow-macros~,
+which means you can freely use all the macros (including ~->~) provided by ~arrow-macros~ inside or outside of ~clocally~, ~clet~, ~clet*~, or ~csetf~.
 * Example
 For the following C code:
 
