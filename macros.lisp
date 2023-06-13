@@ -10,7 +10,7 @@
   "Similar to THE, but declares the CFFI type for FORM."
   `(%cthe ',ctype ,form))
 
-(defmacro clocally (&body body &environment env)
+(defmacro clocally (&body body &environment *macro-environment*)
   "Similar to LOCALLY but allows using CTYPE to declare CFFI types for variables."
   (let* ((declarations (loop :for (declaration . rest) :on body
                              :while (and (listp declaration) (eq (car declaration) 'declare))
@@ -30,9 +30,9 @@
         (let ((*type-dictionary* (nconc types *type-dictionary*))
               (*struct-slots* (nconc slots *struct-slots*)))
           `(%cthe nil ,(let ((*value-required* t))
-                        (expand-form (macroexpand-all `(locally (declare . ,declarations) . ,body) #-ecl env)))))))))
+                         (expand-form (macroexpand-all `(locally (declare . ,declarations) . ,body) #-ecl *macro-environment*)))))))))
 
-(defmacro clet (bindings &body body &environment env)
+(defmacro clet (bindings &body body &environment *macro-environment*)
   "Equivalent to variable definition and initialization statements in C, but with type inference. For each element (NAME FORM) of BINDINGS, NAME is always bound to a CFFI pointer, with the following cases for different FORMs:
 - A type of CFFI: An uninitialized variable of that type is created on the stack, and the bound pointer is pointed to it.
 - A variable with pointer type: NAME is directly bound to this pointer variable.
@@ -54,7 +54,7 @@
           :if (or (keywordp var) (and (listp var) (or (keywordp (first var)) (eq (first var) 'foreign-alloc))))
             :if (and (listp var) (eq (first var) 'foreign-alloc))
               :collect `(let ((,name ,var))) :into forms
-              :and :when (constantp (second var) env)
+              :and :when (constantp (second var) *macro-environment*)
                 :collect (cons name (ensure-pointer-type (eval (second var)))) :into types
               :end
             :else
@@ -89,7 +89,7 @@
            . ,body))
       `(clocally . ,body)))
 
-(defmacro csetf (&rest args)
+(defmacro csetf (&rest args &environment *macro-environment*)
   "Equivalent to assignment statements in C, which assign the rvalue of each pair to the lvalue. Note that both the lvalues and rvalues are represented as CFFI pointers here, and the assignment operation is actually a memory copy."
   (when args
     (destructuring-bind (var val &rest args) args

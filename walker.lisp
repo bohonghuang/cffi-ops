@@ -6,6 +6,8 @@
 
 (defvar *struct-slots* nil)
 
+(defvar *macro-environment* nil)
+
 (defun ctypes-slots (types)
   (let ((type-table (make-hash-table)))
     (labels ((ctype-slots (ctype)
@@ -22,11 +24,20 @@
       (remove-duplicates (mapcan #'ctype-slots types)))))
 
 (defun form-type (form)
+  (setf form (macroexpand form *macro-environment*))
   (etypecase form
     (symbol (values (assoc-value *type-dictionary* form) form))
     (list (destructuring-ecase form
-            ((%cthe ctype cform) (assert (constantp ctype)) (values (eval ctype) cform))
-            ((cthe ctype cform) (values ctype cform))))))
+            ((the type tform)
+             (declare (ignore type))
+             (values (form-type tform) form))
+            ((%cthe ctype cform)
+             (assert (constantp ctype *macro-environment*))
+             (values (eval ctype) cform))
+            ((foreign-alloc ctype &rest args)
+             (declare (ignore args))
+             (assert (constantp ctype *macro-environment*))
+             (values (eval ctype) form))))))
 
 (declaim (inline %cthe))
 (defun %cthe (ctype form)
@@ -73,7 +84,7 @@
                            (list (list (first binding) (expand-form (second binding))))))
                        bindings)
                (mapcar #'expand-form body)))
-       ((-> &rest args) (declare (ignore args)) (expand-form (macroexpand form)))
+       ((-> &rest args) (declare (ignore args)) (expand-form (macroexpand form *macro-environment*)))
        (([] pointer &optional (index 0)) (expand-aref pointer index))
        ((& form) (expand-ref form))
        ((t &rest args)
