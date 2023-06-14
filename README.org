@@ -15,9 +15,10 @@ Here is a comparison table between C syntax:
 | C                        | ~cffi-ops~                                                                       |
 |--------------------------+--------------------------------------------------------------------------------|
 | ~x->y.z~ or ~x->y->z~        | ~(-> x y z)~ (Note that ~x~, ~y~, and ~z~ must be the same symbols used in ~defcstruct~) |
-| ~&x.y~                     | ~(& (-> x y))~                                                                   |
+| ~&x->y~                    | ~(& (-> x y))~                                                                   |
 | ~*x~                       | ~([] x)~                                                                         |
 | ~x[n]~                     | ~([] x n)~                                                                       |
+| ~&x[n]~ or ~x + n~           | ~(& ([] x n))~                                                                   |
 | ~x.y = z~                  | ~(setf (-> x y) z)~ if ~z~ is a variable                                           |
 |                          | ~(csetf (-> x y) z)~ if ~z~ is a CFFI pointer                                      |
 | ~A _a, *a = &_a~           | ~(clet ((a (:struct A))) ...)~                                                   |
