@@ -46,7 +46,7 @@
 
 (defun expand-slot (slot form)
   (multiple-value-bind (type form)
-      (form-type (let ((*value-required* nil)) (expand-form form)))
+      (let ((*value-required* nil)) (form-type (expand-form form)))
     (loop :for parsed-type := (cffi::ensure-parsed-base-type type)
           :for expansions :from 0
           :while (typep parsed-type 'cffi::foreign-pointer-type)
@@ -60,7 +60,7 @@
 
 (defun expand-aref (pointer index)
   (multiple-value-bind (type pointer)
-      (form-type (let ((*value-required* t)) (expand-form pointer)))
+      (let ((*value-required* t)) (form-type (expand-form pointer)))
     (let ((index (let ((*value-required* t)) (expand-form index)))
           (rtype (cffi::unparse-type (cffi::pointer-type (cffi::ensure-parsed-base-type type)))))
       (if *value-required*
@@ -68,7 +68,9 @@
           `(%cthe ',type (mem-aptr ,pointer ',rtype ,index))))))
 
 (defun expand-ref (form)
-  (multiple-value-bind (type form) (form-type (let ((*value-required* nil)) (expand-form form)))
+  (multiple-value-bind (type form)
+      (let ((*value-required* nil))
+        (form-type (expand-form form)))
     `(%cthe ',type ,form)))
 
 (defun expand-form (form)
