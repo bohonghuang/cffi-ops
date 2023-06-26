@@ -27,7 +27,7 @@
   (setf form (macroexpand form *macro-environment*))
   (etypecase form
     (symbol (values (assoc-value *type-dictionary* form) form))
-    (list (destructuring-ecase form
+    (list (destructuring-case form
             ((the type tform)
              (declare (ignore type))
              (values (form-type tform) form))
@@ -37,7 +37,10 @@
             ((foreign-alloc ctype &rest args)
              (declare (ignore args))
              (assert (constantp ctype *macro-environment*))
-             (values (eval ctype) form))))))
+             (values (eval ctype) form))
+            ((t &rest args)
+             (declare (ignore args))
+             (values nil form))))))
 
 (declaim (inline %cthe))
 (defun %cthe (ctype form)
