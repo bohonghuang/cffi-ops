@@ -47,6 +47,9 @@
   (declare (ignore ctype))
   (values form))
 
+(define-compiler-macro %cthe (ctype form)
+  (declare (ignore ctype)) form)
+
 (defun expand-slot (slot form)
   (multiple-value-bind (type form)
       (let ((*value-required* nil)) (form-type (expand-form form)))
