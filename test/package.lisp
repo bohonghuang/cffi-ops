@@ -15,10 +15,10 @@
 
 (defun vector3-add (output v1 v2)
   (clocally
-    (declare (ctype (:pointer (:struct vector3)) output v1 v2))
-    (setf (-> output x) (+ (-> v1 x) (-> v2 x))
-          (-> output y) (+ (-> v1 y) (-> v2 y))
-          (-> output z) (+ (-> v1 z) (-> v2 z)))))
+    (declare (ctype (:pointer (:struct vector3)) v1 v2))
+    (setf (-> (cthe (:pointer (:struct vector3)) output) x) (+ (-> v1 x) (-> v2 x))
+          (-> (cthe (:pointer (:struct vector3)) output) y) (+ (-> v1 y) (-> v2 y))
+          (-> (cthe (:pointer (:struct vector3)) output) z) (+ (-> v1 z) (-> v2 z)))))
 
 (define-test suite
   (clet ((m1 (:array (:struct matrix3) 3)))
