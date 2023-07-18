@@ -34,7 +34,7 @@
             ((%cthe ctype cform)
              (assert (constantp ctype *macro-environment*))
              (values (eval ctype) cform))
-            ((foreign-alloc ctype &rest args)
+            (((foreign-alloc foreign-alloca) ctype &rest args)
              (declare (ignore args))
              (assert (constantp ctype *macro-environment*))
              (values (eval ctype) form))

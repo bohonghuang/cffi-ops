@@ -21,7 +21,7 @@ Here is a comparison table between C syntax:
 | ~&x[n]~ or ~x + n~           | ~(& ([] x n))~                                                                   |
 | ~x.y = z~                  | ~(setf (-> x y) z)~ if ~z~ is a variable                                           |
 |                          | ~(csetf (-> x y) z)~ if ~z~ is a CFFI pointer                                      |
-| ~A _a, *a = &_a~           | ~(clet ((a (:struct A))) ...)~                                                   |
+| ~A _a, *a = &_a~           | ~(clet ((a (foreign-alloca '(:struct A)))) ...)~                                 |
 | ~A *a = malloc(sizeof(A))~ | ~(clet ((a (cffi:foreign-alloc '(:struct A)))) ...)~                             |
 | ~A _a = *b, *a = &_a~      | ~(clet ((a ([] b))) ...)~                                                        |
 | ~A *a = b~                 | ~(clet ((a b)) ...)~                                                             |
@@ -104,7 +104,7 @@ The equivalent Lisp code (written using ~cffi-ops~) is:
             (-> output z) (+ (-> v1 z) (-> v2 z)))))
 
   (defun main ()
-    (clet ((m1 (:array (:struct matrix3) 3)))
+    (clet ((m1 (foreign-alloca '(:array (:struct matrix3) 3))))
       (setf (-> ([] m1 0) v1 x) 1.0
             (-> ([] m1 0) v1 y) 2.0
             (-> ([] m1 0) v1 z) 3.0)

@@ -34,9 +34,9 @@
 
 (defmacro clet (bindings &body body &environment *macro-environment*)
   "Equivalent to variable definition and initialization statements in C, but with type inference. For each element (NAME FORM) of BINDINGS, NAME is always bound to a CFFI pointer, with the following cases for different FORMs:
-- A type of CFFI: An uninitialized variable of that type is created on the stack, and the bound pointer is pointed to it.
+- (FOREIGN-ALLOCA 'CFFI-TYPE): An uninitialized variable of that type is created on the stack semantically, and the bound pointer is pointed to it.
 - A variable with pointer type: NAME is directly bound to this pointer variable.
-- A variable with non-pointer type: The variable is copied onto the stack, and the bound pointer is pointed to it."
+- A variable with non-pointer type: The variable is copied onto the stack semantically, and the bound pointer is pointed to it."
   (flet ((pointer-type-p (type)
            (typep (cffi::ensure-parsed-base-type type) 'cffi::foreign-pointer-type))
          (ensure-pointer-type (type)
@@ -51,15 +51,21 @@
                 (t type)))))
     (loop :with type :and form
           :for (name var) :in bindings
-          :if (or (keywordp var) (and (listp var) (or (keywordp (first var)) (eq (first var) 'foreign-alloc))))
+          :if (or (keywordp var) (and (listp var) (or (keywordp (first var)) (member (first var) '(foreign-alloc foreign-alloca)))))
             :if (and (listp var) (eq (first var) 'foreign-alloc))
               :collect `(let ((,name ,var))) :into forms
+              :and :when (constantp (second var) *macro-environment*)
+                :collect (cons name (ensure-pointer-type (eval (second var)))) :into types
+              :end
+            :else :if (and (listp var) (eq (first var) 'foreign-alloca))
+              :collect `(with-foreign-object (,name ,(second var))) :into forms
               :and :when (constantp (second var) *macro-environment*)
                 :collect (cons name (ensure-pointer-type (eval (second var)))) :into types
               :end
             :else
               :collect `(with-foreign-object (,name ',var)) :into forms
               :and :collect (cons name (ensure-pointer-type var)) :into types
+              :and :do (simple-style-warning "The syntax of (CLET ((VAR CFFI-TYPE)) ...) for semantical on-stack memory allocation is deprecated.~%Please use (CLET ((VAR (FOREIGN-ALLOCA 'CFFI-TYPE))) ...) instead.")
             :end
           :else
             :do (setf (values type form) (form-type (expand-form var)))
