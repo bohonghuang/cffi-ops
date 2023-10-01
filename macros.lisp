@@ -10,16 +10,23 @@
   "Similar to THE, but declares the CFFI type for FORM."
   `(%cthe ',ctype ,form))
 
+(defun body-declarations (body)
+  (values
+   (loop :for (declaration . rest) :on body
+         :while (and (listp declaration) (eq (car declaration) 'declare))
+         :do (setf body rest)
+         :append (cdr declaration))
+   body))
+
 (defmacro clocally (&body body &environment *macro-environment*)
   "Similar to LOCALLY but allows using CTYPE to declare CFFI types for variables."
-  (let* ((declarations (loop :for (declaration . rest) :on body
-                             :while (and (listp declaration) (eq (car declaration) 'declare))
-                             :do (setf body rest)
-                             :append (cdr declaration))))
+  (multiple-value-bind (body-declarations body) (body-declarations body)
     (multiple-value-bind (ctypes declarations)
-        (loop :for declaration :in declarations
+        (loop :for declaration :in body-declarations
               :if (eq (car declaration) 'ctype)
                 :collect (cdr declaration) :into ctypes
+              :else :if (eq (car declaration) 'dynamic-extent)
+                :do (progn)
               :else
                 :collect declaration :into declarations
               :finally (return (values ctypes declarations)))
@@ -34,48 +41,31 @@
 
 (defmacro clet (bindings &body body &environment *macro-environment*)
   "Equivalent to variable definition and initialization statements in C, but with type inference. For each element (NAME FORM) of BINDINGS, NAME is always bound to a CFFI pointer, with the following cases for different FORMs:
-- (FOREIGN-ALLOCA 'CFFI-TYPE): An uninitialized variable of that type is created on the stack semantically, and the bound pointer is pointed to it.
 - A variable with pointer type: NAME is directly bound to this pointer variable.
 - A variable with non-pointer type: The variable is copied onto the stack semantically, and the bound pointer is pointed to it."
-  (flet ((pointer-type-p (type)
-           (typep (cffi::ensure-parsed-base-type type) 'cffi::foreign-pointer-type))
-         (ensure-pointer-type (type)
-           (setf type (cffi::ensure-parsed-base-type type)
-                 type (typecase type
-                        (cffi::foreign-pointer-type (cffi::pointer-type type))
-                        (cffi::foreign-array-type (cffi::element-type type))
-                        (t type)))
-           `(:pointer
-             ,(typecase type
-                (cffi::foreign-type (cffi::unparse-type type))
-                (t type)))))
+  (multiple-value-bind (body-declarations body)
+      (body-declarations body)
     (loop :with type :and form
+          :with dynamic-extent-vars := (mapcan (lambda (declaration)
+                                                 (when (eq (car declaration) 'dynamic-extent)
+                                                   (cdr declaration)))
+                                               body-declarations)
           :for (name var) :in bindings
-          :if (or (keywordp var) (and (listp var) (or (keywordp (first var)) (member (first var) '(foreign-alloc foreign-alloca)))))
-            :if (and (listp var) (eq (first var) 'foreign-alloc))
-              :collect `(let ((,name ,var))) :into forms
-              :and :when (constantp (second var) *macro-environment*)
-                :collect (cons name (ensure-pointer-type (eval (second var)))) :into types
-              :end
-            :else :if (and (listp var) (eq (first var) 'foreign-alloca))
-              :collect `(with-foreign-object (,name ,(second var))) :into forms
-              :and :when (constantp (second var) *macro-environment*)
-                :collect (cons name (ensure-pointer-type (eval (second var)))) :into types
-              :end
-            :else
-              :collect `(with-foreign-object (,name ',var)) :into forms
-              :and :collect (cons name (ensure-pointer-type var)) :into types
-              :and :do (simple-style-warning "The syntax of (CLET ((VAR CFFI-TYPE)) ...) for semantical on-stack memory allocation is deprecated.~%Please use (CLET ((VAR (FOREIGN-ALLOCA 'CFFI-TYPE))) ...) instead.")
-            :end
-          :else
-            :do (setf (values type form) (form-type (expand-form var)))
-            :and :collect `(,@(if (pointer-type-p type)
-                                  `(let ((,name ,var)))
-                                  `(with-foreign-object (,name ',type)))
-                            ,@(unless (pointer-type-p type)
-                                `((csetf (%cthe '(:pointer ,type) ,name) ,var))))
-                   :into forms
-            :and :collect (cons name (ensure-pointer-type type)) :into types
+          :when (consp var)
+            :do (destructuring-case var
+                  ((foreign-alloca type)
+                   (push name dynamic-extent-vars)
+                   (setf var `(foreign-alloc ,type))))
+          :do (setf (values type form) (form-type (expand-form var)))
+          :collect (cons name (ensure-pointer-type type)) :into types
+          :collect `(,@(cond
+                         ((member name dynamic-extent-vars)
+                          (funcall (funcall-dynamic-extent-form (car var) (cdr var)) name nil))
+                         ((pointer-type-p type) `(let ((,name ,var))))
+                         (t `(with-foreign-object (,name ',type))))
+                     ,@(unless (pointer-type-p type)
+                         `((csetf (%cthe '(:pointer ,type) ,name) ,var))))
+            :into forms
           :finally
              (return
                (reduce (lambda (x acc) (nconc x (list acc))) forms
@@ -85,12 +75,14 @@
                                           . ,(mapcar (lambda (type)
                                                        `(ctype ,(cdr type) ,(car type)))
                                                      types))
+                                         (declare . ,(remove 'dynamic-extent body-declarations :key #'car))
                                          . ,body))))))
 
 (defmacro clet* (bindings &body body)
   "Similar to CLET, but the initialization FORM of the variable can use variables defined earlier."
   (if bindings
       `(clet (,(car bindings))
+         (declare . ,(remove (caar bindings) (body-declarations body) :key #'cdr :test-not #'member))
          (clet* ,(cdr bindings)
            . ,body))
       `(clocally . ,body)))
@@ -101,8 +93,8 @@
     (destructuring-bind (var val &rest args) args
       (multiple-value-bind (ltype lform) (form-type (let ((*value-required* nil)) (expand-form var)))
         (multiple-value-bind (rtype rform) (form-type (let ((*value-required* nil)) (expand-form val)))
-          (assert (eql (cffi::ensure-parsed-base-type (cffi::pointer-type (cffi::ensure-parsed-base-type ltype)))
-                       (cffi::ensure-parsed-base-type (cffi::pointer-type (cffi::ensure-parsed-base-type rtype)))))
+          (assert (eq (cffi::ensure-parsed-base-type (cffi::pointer-type (cffi::ensure-parsed-base-type ltype)))
+                      (cffi::ensure-parsed-base-type (cffi::pointer-type (cffi::ensure-parsed-base-type rtype)))))
           `(progn
              (memcpy ,lform ,rform ,(foreign-type-size (cffi::unparse-type (cffi::pointer-type (cffi::ensure-parsed-base-type ltype)))))
              (csetf . ,args)))))))

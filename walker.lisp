@@ -20,8 +20,31 @@
                           :do (setf (gethash slot-type type-table) t)
                           :nconc (cons slot-name (ctype-slots slot-type))))
                    (cffi::foreign-pointer-type
-                    (ctype-slots (cffi::pointer-type ctype)))))))
+                    (ctype-slots (cffi::pointer-type ctype)))
+                   (cffi::foreign-array-type
+                    (ctype-slots (cffi::element-type ctype)))))))
       (remove-duplicates (mapcan #'ctype-slots types)))))
+
+(defun pointer-type-p (type)
+  (typep (cffi::ensure-parsed-base-type type) 'cffi::foreign-pointer-type))
+
+(defun ensure-pointer-type (type)
+  (setf type (cffi::ensure-parsed-base-type type)
+        type (typecase type
+               (cffi::foreign-pointer-type (cffi::pointer-type type))
+               (t type)))
+  `(:pointer
+    ,(typecase type
+       (cffi::foreign-array-type (cffi::element-type type))
+       (cffi::foreign-type (cffi::unparse-type type))
+       (t type))))
+
+(defgeneric funcall-form-type (function args)
+  (:method (function args) (declare (ignore function args)))
+  (:method ((function (eql 'foreign-alloc)) args)
+    (destructuring-bind (type) args
+      (assert (constantp type *macro-environment*))
+      `(:pointer ,(eval type)))))
 
 (defun form-type (form)
   (setf form (macroexpand form *macro-environment*))
@@ -34,13 +57,9 @@
             ((%cthe ctype cform)
              (assert (constantp ctype *macro-environment*))
              (values (eval ctype) cform))
-            (((foreign-alloc foreign-alloca) ctype &rest args)
-             (declare (ignore args))
-             (assert (constantp ctype *macro-environment*))
-             (values (eval ctype) form))
             ((t &rest args)
              (declare (ignore args))
-             (values nil form))))))
+             (values (funcall-form-type (car form) (cdr form)) form))))))
 
 (declaim (inline %cthe))
 (defun %cthe (ctype form)
@@ -66,12 +85,25 @@
 
 (defun expand-aref (pointer index)
   (multiple-value-bind (type pointer)
-      (let ((*value-required* t)) (form-type (expand-form pointer)))
-    (let ((index (let ((*value-required* t)) (expand-form index)))
-          (rtype (cffi::unparse-type (cffi::pointer-type (cffi::ensure-parsed-base-type type)))))
-      (if *value-required*
-          `(%cthe ',rtype (mem-aref ,pointer ',rtype ,index))
-          `(%cthe ',type (mem-aptr ,pointer ',rtype ,index))))))
+      (multiple-value-bind (value-type value-form)
+          (let ((*value-required* t))
+            (form-type (expand-form pointer)))
+        (when (typep (cffi::ensure-parsed-base-type value-type) 'cffi::foreign-array-type)
+          (setf (values value-type value-form) (let ((*value-required* nil)) (form-type (expand-form pointer)))
+                value-type (cadr value-type))) ; (:pointer (:array ...)) -> (:array ...)
+        (values value-type value-form))
+    (let ((index (let ((*value-required* t)) (expand-form index))))
+      (multiple-value-bind (type rtype)
+          (let ((rtype (cffi::ensure-parsed-base-type type)))
+            (etypecase rtype
+              (cffi::foreign-pointer-type
+               (values type (cffi::unparse-type (cffi::pointer-type rtype))))
+              (cffi::foreign-array-type
+               (values `(:pointer ,(cffi::element-type rtype)) ; (:array ...) -> (:pointer ...)
+                       (cffi::element-type rtype)))))
+        (if *value-required*
+            `(%cthe ',rtype (mem-aref ,pointer ',rtype ,index))
+            `(%cthe ',type (mem-aptr ,pointer ',rtype ,index)))))))
 
 (defun expand-ref (form)
   (multiple-value-bind (type form)
@@ -104,3 +136,11 @@
             (expand-slot (car form) (first args))
             (cons (car form) (let ((*value-required* t)) (mapcar #'expand-form args)))))))
     (t form)))
+
+(defgeneric funcall-dynamic-extent-form (function args)
+  (:method (function args) (declare (ignore function args)))
+  (:method ((function (eql 'foreign-alloc)) args)
+    (destructuring-bind (type) args
+      (lambda (var body)
+        (assert (constantp type *macro-environment*))
+        `(with-foreign-object (,var ',(eval type)) . ,body)))))

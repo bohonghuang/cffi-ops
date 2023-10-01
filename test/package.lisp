@@ -20,8 +20,11 @@
           (-> (cthe (:pointer (:struct vector3)) output) y) (+ (-> v1 y) (-> v2 y))
           (-> (cthe (:pointer (:struct vector3)) output) z) (+ (-> v1 z) (-> v2 z)))))
 
-(define-test suite
-  (clet ((m1 (:array (:struct matrix3) 3)))
+(define-test suite)
+
+(define-test simple :parent suite
+  (clet ((m1 (foreign-alloc '(:array (:struct matrix3) 3))))
+    (declare (dynamic-extent m1))
     (setf (-> ([] m1 0) v1 x) 1.0
           (-> ([] m1 0) v1 y) 2.0
           (-> ([] m1 0) v1 z) 3.0)
@@ -36,3 +39,20 @@
       (is = (-> v1 y) 4.0)
       (is = (-> v1 z) 4.0)
       (foreign-free v2))))
+
+(define-test nested-array :parent suite
+  (clet ((m (foreign-alloc '(:array (:array :float 3) 3))))
+    (declare (dynamic-extent m))
+    (loop :for row :below 3
+          :do (loop :for col :below 3
+                    :do (setf ([] ([] m row) col) (+ (* row 3.0) col))))
+    (clet ((m1 ([] (cthe (:pointer (:struct matrix3)) m))))
+      (is = 0.0 (-> (-> m1 v1) x))
+      (is = 1.0 (-> (-> m1 v1) y))
+      (is = 2.0 (-> (-> m1 v1) z))
+      (is = 3.0 (-> (-> m1 v2) x))
+      (is = 4.0 (-> (-> m1 v2) y))
+      (is = 5.0 (-> (-> m1 v2) z))
+      (is = 6.0 (-> (-> m1 v3) x))
+      (is = 7.0 (-> (-> m1 v3) y))
+      (is = 8.0 (-> (-> m1 v3) z)))))
