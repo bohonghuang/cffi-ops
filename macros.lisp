@@ -43,6 +43,7 @@
   "Equivalent to variable definition and initialization statements in C, but with type inference. For each element (NAME FORM) of BINDINGS, NAME is always bound to a CFFI pointer, with the following cases for different FORMs:
 - A variable with pointer type: NAME is directly bound to this pointer variable.
 - A variable with non-pointer type: The variable is copied onto the stack semantically, and the bound pointer is pointed to it."
+  #+sbcl (declare (sb-ext:muffle-conditions warning))
   (multiple-value-bind (body-declarations body)
       (body-declarations body)
     (loop :with type :and form
@@ -58,17 +59,18 @@
                    (setf var `(foreign-alloc ,type))))
           :do (setf (values type form) (form-type (expand-form var)))
           :collect (cons name (ensure-pointer-type type)) :into types
-          :collect `(,@(cond
-                         ((member name dynamic-extent-vars)
-                          (funcall (funcall-dynamic-extent-form (car var) (cdr var)) name nil))
-                         ((pointer-type-p type) `(let ((,name ,var))))
-                         (t `(with-foreign-object (,name ',type))))
-                     ,@(unless (pointer-type-p type)
-                         `((csetf (%cthe '(:pointer ,type) ,name) ,var))))
+          :collect (let ((name name) (var var) (type type))
+                     (compose
+                      (cond
+                        ((member name dynamic-extent-vars)
+                         (curry (funcall-dynamic-extent-form (car var) (cdr var)) name))
+                        ((pointer-type-p type)  (lambda (body) `(let ((,name ,var)) . ,body)))
+                        (t (lambda (body) `(with-foreign-object (,name ',type) (csetf (%cthe '(:pointer ,type) ,name) ,var) . ,body))))
+                      #'list))
             :into forms
           :finally
              (return
-               (reduce (lambda (x acc) (nconc x (list acc))) forms
+               (reduce #'funcall forms
                        :from-end t
                        :initial-value `(clocally
                                          (declare
