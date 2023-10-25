@@ -51,21 +51,23 @@
                                                  (when (eq (car declaration) 'dynamic-extent)
                                                    (cdr declaration)))
                                                body-declarations)
-          :for (name var) :in bindings
-          :when (consp var)
-            :do (destructuring-case var
+          :for (name val) :in bindings
+          :when (consp val)
+            :do (destructuring-case val
                   ((foreign-alloca type)
                    (push name dynamic-extent-vars)
-                   (setf var `(foreign-alloc ,type))))
-          :do (setf (values type form) (form-type (expand-form var)))
+                   (setf val `(foreign-alloc ,type))))
+          :do (setf (values type form) (form-type (expand-form val)))
           :collect (cons name (ensure-pointer-type type)) :into types
-          :collect (let ((name name) (var var) (type type))
+          :collect (let ((name name) (val val) (type type))
                      (compose
                       (cond
                         ((member name dynamic-extent-vars)
-                         (curry (funcall-dynamic-extent-form (car var) (cdr var)) name))
-                        ((pointer-type-p type)  (lambda (body) `(let ((,name ,var)) . ,body)))
-                        (t (lambda (body) `(with-foreign-object (,name ',type) (csetf (%cthe '(:pointer ,type) ,name) ,var) . ,body))))
+                         (lambda (body)
+                           (with-gensyms (var)
+                             (funcall (funcall-dynamic-extent-form (car val) (cdr val)) var `((let ((,name ,var)) ,@body))))))
+                        ((pointer-type-p type)  (lambda (body) `(let ((,name ,val)) . ,body)))
+                        (t (lambda (body) `(with-foreign-object (,name ',type) (csetf (%cthe '(:pointer ,type) ,name) ,val) . ,body))))
                       #'list))
             :into forms
           :finally
