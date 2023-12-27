@@ -2,7 +2,7 @@
 
 (define-setf-expander %cthe (ctype form &environment env)
   (declare (ignore ctype))
-  (get-setf-expansion form env))
+  (get-setf-expansion (expand-form form) env))
 
 (define-setf-expander -> (init &rest exps &environment env)
   (get-setf-expansion (expand-form `(-> ,init . ,exps)) env))

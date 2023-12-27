@@ -115,7 +115,7 @@
   (typecase form
     (cons
      (destructuring-case form
-       (((declare quote %cthe) &rest args) (declare (ignore args)) form)
+       (((declare quote) &rest args) (declare (ignore args)) form)
        (((let let*) bindings &rest body)
         (list* (car form)
                (mapcar (lambda (binding)
@@ -124,6 +124,7 @@
                            (list (list (first binding) (expand-form (second binding))))))
                        bindings)
                (mapcar #'expand-form body)))
+       ((%cthe type form) `(%cthe ,type ,(expand-form form)))
        ((-> init &rest args) (declare (ignore args))
         (let ((*struct-slots* (if-let ((type (form-type (expand-form init))))
                                 (nconc (ctypes-slots (list type)) *struct-slots*)
