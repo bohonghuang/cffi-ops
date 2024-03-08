@@ -133,9 +133,10 @@
        (([] pointer &optional (index 0)) (expand-aref pointer index))
        ((& form) (expand-ref form))
        ((t &rest args)
-        (if (find (car form) *struct-slots*)
-            (expand-slot (car form) (first args))
-            (cons (car form) (let ((*value-required* t)) (mapcar #'expand-form args)))))))
+        (cond
+          ((find (car form) *struct-slots*) (expand-slot (car form) (first args)))
+          ((proper-list-p args) (cons (car form) (let ((*value-required* t)) (mapcar #'expand-form args))))
+          (t form)))))
     (t form)))
 
 (defgeneric funcall-dynamic-extent-form (function args)
