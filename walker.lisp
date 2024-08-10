@@ -124,6 +124,14 @@
                            (list (list (first binding) (expand-form (second binding))))))
                        bindings)
                (mapcar #'expand-form body)))
+       (((flet labels) bindings &rest body)
+        (list* (car form)
+               (mapcar
+                (lambda (binding)
+                  (destructuring-bind (name lambda-list &rest body) binding
+                    `(,name ,lambda-list . ,(mapcar #'expand-form body))))
+                bindings)
+               (mapcar #'expand-form body)))
        ((%cthe type form) `(%cthe ,type ,(expand-form form)))
        ((-> init &rest args) (declare (ignore args))
         (let ((*struct-slots* (if-let ((type (form-type (expand-form init))))
