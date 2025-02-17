@@ -8,6 +8,7 @@
 
 (defvar *macro-environment* nil)
 
+(declaim (notinline ctypes-slots))
 (defun ctypes-slots (types)
   (let ((type-table (make-hash-table)))
     (labels ((ctype-slots (ctype)
@@ -25,9 +26,11 @@
                     (ctype-slots (cffi::element-type ctype)))))))
       (remove-duplicates (mapcan #'ctype-slots types)))))
 
+(declaim (notinline pointer-type-p))
 (defun pointer-type-p (type)
   (typep (cffi::ensure-parsed-base-type type) 'cffi::foreign-pointer-type))
 
+(declaim (notinline ensure-pointer-type))
 (defun ensure-pointer-type (type)
   (setf type (cffi::ensure-parsed-base-type type)
         type (typecase type
@@ -46,6 +49,7 @@
       (assert (constantp type *macro-environment*))
       `(:pointer ,(eval type)))))
 
+(declaim (notinline form-type))
 (defun form-type (form)
   (setf form (macroexpand form *macro-environment*))
   (etypecase form
